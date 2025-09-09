@@ -1,0 +1,64 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Serverless Expense Tracker API
+
+Globals:
+  Function:
+    Timeout: 30
+    Runtime: java17
+    MemorySize: 512
+    Environment:
+      Variables:
+        EXPENSES_TABLE: !Ref ExpensesTable
+
+Resources:
+  # Lambda Function
+  ExpenseFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: target/serverless-expense-tracker-1.0.0.jar
+      Handler: com.expensetracker.handler.ExpenseHandler::handleRequest
+      Events:
+        ExpenseApi:
+          Type: Api
+          Properties:
+            Path: /expenses
+            Method: any
+        ExpenseByIdApi:
+          Type: Api
+          Properties:
+            Path: /expenses/{id}
+            Method: any
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ExpensesTable
+
+  # DynamoDB Table
+  ExpensesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: ExpensesTable
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        - AttributeName: userId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: UserIdIndex
+          KeySchema:
+            - AttributeName: userId
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+
+Outputs:
+  ExpenseApi:
+    Description: "API Gateway endpoint URL"
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/expenses"
+  ExpenseFunction:
+    Description: "Expense Lambda Function ARN"
+    Value: !GetAtt ExpenseFunction.Arn

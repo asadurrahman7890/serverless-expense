@@ -1,0 +1,98 @@
+pipeline {
+    agent any
+    
+    environment {
+        AWS_DEFAULT_REGION = 'us-east-1'
+        SAM_CLI_TELEMETRY = '0'
+    }
+    
+    stages {
+        stage('Checkout') {
+            steps {
+                echo 'Checking out source code...'
+                checkout scm
+            }
+        }
+        
+        stage('Build') {
+            steps {
+                echo 'Building with Maven...'
+                sh 'mvn clean compile'
+            }
+        }
+        
+        stage('Test') {
+            steps {
+                echo 'Running tests...'
+                sh 'mvn test'
+            }
+            post {
+                always {
+                    publishTestResults testsGlob: 'target/surefire-reports/*.xml'
+                }
+            }
+        }
+        
+        stage('Package') {
+            steps {
+                echo 'Packaging Lambda function...'
+                sh 'mvn package'
+            }
+        }
+        
+        stage('Deploy to Dev') {
+            steps {
+                echo 'Deploying to development environment...'
+                withCredentials([aws(credentialsId: 'aws-credentials', region: 'us-east-1')]) {
+                    sh '''
+                        sam build
+                        sam deploy --no-confirm-changeset --no-fail-on-empty-changeset --stack-name expense-tracker-dev --capabilities CAPABILITY_IAM
+                    '''
+                }
+            }
+        }
+        
+        stage('Integration Tests') {
+            steps {
+                echo 'Running integration tests...'
+                script {
+                    // Get API Gateway URL from CloudFormation stack
+                    def apiUrl = sh(
+                        script: "aws cloudformation describe-stacks --stack-name expense-tracker-dev --query 'Stacks[0].Outputs[?OutputKey==`ExpenseApi`].OutputValue' --output text",
+                        returnStdout: true
+                    ).trim()
+                    
+                    // Simple health check
+                    sh "curl -f ${apiUrl} || exit 1"
+                }
+            }
+        }
+        
+        stage('Deploy to Production') {
+            when {
+                branch 'main'
+            }
+            steps {
+                echo 'Deploying to production environment...'
+                input message: 'Deploy to production?', ok: 'Deploy'
+                withCredentials([aws(credentialsId: 'aws-credentials', region: 'us-east-1')]) {
+                    sh '''
+                        sam deploy --no-confirm-changeset --no-fail-on-empty-changeset --stack-name expense-tracker-prod --capabilities CAPABILITY_IAM
+                    '''
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            echo 'Pipeline completed!'
+        }
+        success {
+            echo 'Pipeline succeeded!'
+        }
+        failure {
+            echo 'Pipeline failed!'
+        }
+    }
+}
